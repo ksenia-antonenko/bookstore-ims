@@ -1,0 +1,77 @@
+import org.gradle.api.tasks.testing.logging.TestLogEvent
+
+plugins.withId('java') {
+    // should be executed only when JavaPlugin is applied to project
+
+    def unitTestPatterns = ["**/*Test.class"].toSet()
+    def integrationTestPatterns = ["**/*IT.class"].toSet()
+
+    def integrationTestTask = project.tasks.register("integrationTest", Test) { task ->
+        task.group = JavaBasePlugin.VERIFICATION_GROUP
+        task.description = "Runs the integration tests."
+
+        // include integration tests only
+        task.include(integrationTestPatterns)
+
+        // specify required order of tasks execution: test, integrationTest
+        def testTask = tasks.named(JavaPlugin.TEST_TASK_NAME)
+        task.mustRunAfter(testTask)
+
+        logger.info("Using following configuration for {} : 'inclusion patterns' - {}, 'mustRunAfter' - {}",
+                task.path, integrationTestPatterns, getTaskPath(testTask))
+    }
+
+    project.tasks.named(JavaPlugin.TEST_TASK_NAME, Test) { task ->
+        // include unit tests only
+        task.include(unitTestPatterns)
+        logger.info("Using following configuration for {} : 'inclusion patterns' - {}",
+                task.path, unitTestPatterns)
+    }
+
+    project.tasks.named(JavaBasePlugin.CHECK_TASK_NAME) { task ->
+        task.dependsOn(integrationTestTask)
+    }
+
+    // add default configuration to tasks of Test type
+    project.tasks.withType(Test).configureEach { task ->
+        // specify JUnit5 platform usage
+        task.useJUnitPlatform()
+
+        // specify which types of event should be logged
+        def testLoggingEvents = [TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED].toSet()
+        task.getTestLogging().setEvents(testLoggingEvents)
+
+        // set whether failure ignoring is enabled or not (required to complete all "check" dependent tasks
+        // even if some should already fail execution)
+        task.ignoreFailures = Boolean.parseBoolean(findProperty("bookstore.test.failure.ignore") as String ?: "false")
+
+        // Make tests being run only after checkstyle if its tasks exist
+        def checkstyleMainTask = project.tasks.named("checkstyleMain")
+        if (checkstyleMainTask.getOrNull()) {
+            task.mustRunAfter(checkstyleMainTask.get())
+            logger.info("Using following configuration for {} : 'dependsOn' - {}",
+                    task.path, getTaskPath(checkstyleMainTask))
+        }
+
+        def checkstyleTestTask = project.tasks.named("checkstyleTest")
+        if (checkstyleTestTask.getOrNull()) {
+            task.mustRunAfter(checkstyleTestTask.get())
+            logger.info("Using following configuration for {} : 'dependsOn' - {}",
+                    task.path, getTaskPath(checkstyleTestTask))
+        }
+
+        logger.info("Using following configuration for {} : 'test platform' - JUnit5, 'test logging events' - {}, " +
+                "'ignoreFailures' - {}", task.path, testLoggingEvents, task.ignoreFailures)
+    }
+}
+
+private String getTaskPath(TaskProvider<Task> taskProvider) {
+    if (project.rootProject == project) {
+        // in case if current project is a root project, then just output ":" plus task name according to canonical way
+        // of task path representation
+        return ":${taskProvider.name}"
+    } else {
+        // otherwise output project path with ":" as a separator plus task name
+        return "${project.path}:${taskProvider.name}"
+    }
+}

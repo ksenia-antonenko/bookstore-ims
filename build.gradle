@@ -1,0 +1,126 @@
+buildscript {
+    ext {
+        thymeleafVersion = '3.2.6'
+        openApiVersion = '2.3.0'
+        awsSdkVersion = '2.17.269'
+        jacksonVersion = '2.15.2'
+        protobufVersion = '3.24.4'
+        springCloudVersion = '2024.0.0'
+        springKuberVersion = '3.2.0'
+        hypersistenceUtilsVersion = '3.8.3'
+        liquibaseVersion = '4.29.2'
+        postgresqlVersion = '42.7.7'
+    }
+}
+
+plugins {
+    id 'org.springframework.boot'
+    id 'io.spring.dependency-management'
+    id 'java'
+}
+
+//apply plugin: TestingConvention
+apply from: './build.test-convention.gradle'
+apply from: './build.code-quality-convention.gradle'
+
+group = 'org.example'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    logger.lifecycle("Using Java [{}] with following compatibility settings: 'source' - {}, 'target' - {}",
+            JavaVersion.current(), sourceCompatibility, targetCompatibility)
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-kubernetes-fabric8-leader:${springKuberVersion}"
+    }
+}
+
+dependencies {
+
+    //springboot
+    implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-configuration-processor'
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${openApiVersion}"
+    // security
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+
+    // jdbc, jpa, migration
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+//    implementation "io.hypersistence:hypersistence-utils-hibernate-63:${hypersistenceUtilsVersion}"
+    implementation 'org.hibernate.orm:hibernate-envers'
+    annotationProcessor 'org.hibernate.orm:hibernate-jpamodelgen'
+    testAnnotationProcessor 'org.hibernate.orm:hibernate-jpamodelgen'
+    implementation "org.liquibase:liquibase-core:${liquibaseVersion}"
+
+    implementation "org.postgresql:postgresql:${postgresqlVersion}"
+
+    //AWS
+    implementation platform("software.amazon.awssdk:bom:${awsSdkVersion}")
+    implementation 'software.amazon.awssdk:lambda'
+    //kafka
+    implementation 'org.springframework.kafka:spring-kafka'
+
+    // metrics of the service
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+    implementation "io.github.mweirauch:micrometer-jvm-extras:0.2.2"
+
+    // !!!!!
+    // lombok-mapstruct-binding annotation processor MUST go BEFORE lombok annotation processor
+    // !!!!!
+
+    // mapping
+    implementation "org.mapstruct:mapstruct:1.6.3"
+    annotationProcessor("org.projectlombok:lombok:1.18.38")
+    annotationProcessor "org.projectlombok:lombok-mapstruct-binding:0.2.0"
+    annotationProcessor "org.mapstruct:mapstruct-processor:1.6.3"
+
+    // lombok
+    compileOnly("org.projectlombok:lombok:1.18.38")
+//    annotationProcessor("org.projectlombok:lombok:1.18.38")
+
+    // other
+    implementation("org.openapitools:jackson-databind-nullable:0.2.7")
+
+    // test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation "org.springframework.security:spring-security-test"
+    testImplementation platform('org.junit:junit-bom:5.12.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation("org.junit.platform:junit-platform-launcher")
+    testImplementation("org.assertj:assertj-core:3.27.3")
+    testImplementation("org.mockito:mockito-core:5.17.0")
+    testImplementation("org.mockito:mockito-junit-jupiter:5.17.0")
+
+    testAnnotationProcessor "org.mapstruct:mapstruct-processor:1.6.3"
+    testAnnotationProcessor "org.projectlombok:lombok-mapstruct-binding:0.2.0"
+    testCompileOnly("org.projectlombok:lombok:1.18.38")
+    testAnnotationProcessor("org.projectlombok:lombok:1.18.38")
+
+    testImplementation 'io.rest-assured:spring-mock-mvc'
+    testImplementation "org.testcontainers:postgresql"
+    testImplementation "org.testcontainers:junit-jupiter"
+
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ["-Amapstruct.defaultComponentModel=spring"]
+}
+
+test {
+    useJUnitPlatform()
+}

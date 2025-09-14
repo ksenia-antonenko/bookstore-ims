@@ -1,0 +1,190 @@
+import org.sonarqube.gradle.SonarExtension
+import org.sonarqube.gradle.SonarQubePlugin
+
+import java.nio.charset.StandardCharsets
+import java.util.stream.Collectors
+
+buildscript {
+
+    def sonarPluginVersion = '4.0.0.2929'
+
+    dependencies {
+        // plugin for static code analysis - https://plugins.gradle.org/plugin/org.sonarqube
+        classpath "org.sonarsource.scanner.gradle:sonarqube-gradle-plugin:${sonarPluginVersion}"
+    }
+
+    repositories {
+        gradlePluginPortal()
+    }
+}
+
+if (project.rootProject == project) {
+    // enable base lifecycle tasks like clean, check, assemble, uploadArchives
+    project.plugins.apply 'base'
+
+    if (project.subprojects.isEmpty()) {
+        // set up checkstyle for root project
+        setUpCheckstyle(project)
+        // set up jacoco for root project
+        setUpJacoco(project)
+        // set up sonarqube for root project
+        setUpSonarQube(project)
+    } else {
+        // enable sonarqube static analysis for root project
+        project.plugins.apply SonarQubePlugin
+
+        // set up checkstyle, jacoco, sonarqube for all sub-projects
+        project.subprojects.forEach { project ->
+            setUpCheckstyle(project)
+            setUpJacoco(project)
+            setUpSonarQube(project)
+        }
+    }
+} else {
+    logger.warn("code-quality-convention plugin can be applied to the root project only, " +
+            "therefore configuration isn't applied for {}", project.path)
+}
+
+private void setUpCheckstyle(Project project) {
+    // should be executed only when "java" plugin is applied to project
+    project.plugins.withId('java') {
+        // enable required setup of checkstyle related tasks
+        project.plugins.apply 'checkstyle'
+
+        project.extensions.configure(CheckstyleExtension) { extension ->
+            // set whether failure ignoring is enabled or not (required to complete all "check" dependent tasks
+            // even if some should already fail execution)
+            extension.ignoreFailures = Boolean.parseBoolean(findProperty("bookstore.checkstyle.failure.ignore") as String ?: "false")
+            extension.maxWarnings = 0
+            extension.toolVersion = 9.3
+
+            logger.info("Using Checkstyle (version - {}) with following configuration: " +
+                    "'reportsDir' - {}, 'showViolations' - {}, 'ignoreFailures' - {}, " +
+                    "'maxErrors' - {}, 'maxWarnings' - {}, 'configProperties' - {}, 'configDirectory' - {}",
+                    extension.toolVersion, project.relativePath(extension.reportsDir),
+                    extension.showViolations, extension.ignoreFailures, extension.maxErrors, extension.maxWarnings,
+                    extension.configProperties, project.relativePath(extension.configDirectory.asFile))
+        }
+
+        def checkstyleTestTask = project.tasks.named("checkstyleTest")
+        def checkstyleTestMain = project.tasks.named("checkstyleMain")
+        if (checkstyleTestTask.getOrNull() && checkstyleTestMain.getOrNull()) {
+            checkstyleTestTask.get().dependsOn(checkstyleTestMain.get())
+            logger.info("Using following configuration for {} : 'dependsOn' - {}",
+                    checkstyleTestTask.get().path, getTaskPath(checkstyleTestMain))
+        }
+    }
+}
+
+private void setUpJacoco(Project project) {
+    // should be executed only when "java" plugin is applied to project
+    project.plugins.withId('java') {
+        // enable required setup of code coverage related tasks
+        project.plugins.apply 'jacoco'
+
+        project.extensions.configure(JacocoPluginExtension) { extension ->
+            logger.info("Using Jacoco (version - {}) with following configuration: 'reportsDirectory' - {}",
+                    extension.toolVersion, project.relativePath(extension.reportsDirectory.asFile))
+        }
+
+        project.tasks.named("jacocoTestReport", JacocoReport) { task ->
+            task.reports.getCsv().required = false
+            task.reports.getHtml().required = false
+            task.reports.getXml().required = true // xml report is required for sonarqube static code analysis
+            logger.info("Using following configuration for {} : 'reports.csv.enabled' - {}, " +
+                    "'reports.html.enabled' - {}, 'reports.xml.enabled' - {}", task.path, task.reports.getCsv().required,
+                    task.reports.getHtml().required, task.reports.getXml().required)
+        }
+
+        def integrationTestTask = project.tasks.named("integrationTest", Test)
+        def jacocoPluginExtension = project.extensions.findByType(JacocoPluginExtension)
+        def sourceSetExtension = project.extensions.findByType(SourceSetContainer)
+        def mainSourceSet = sourceSetExtension ? sourceSetExtension.getByName(SourceSet.MAIN_SOURCE_SET_NAME) : null
+
+        if (mainSourceSet != null && jacocoPluginExtension != null && integrationTestTask.present) {
+            // creates jacoco report task related to "integrationTest" task result processing
+            project.tasks.register("jacocoIntegrationTestReport", JacocoReport) { task ->
+                task.group = LifecycleBasePlugin.VERIFICATION_GROUP
+                task.description = "Generates code coverage report for the ${integrationTestTask.name} task."
+
+                task.executionData(integrationTestTask.get())
+                task.sourceSets(mainSourceSet)
+
+                task.reports.getCsv().required = false
+                task.reports.getHtml().required = false
+                task.reports.getXml().required = true // xml report is required for sonarqube static code analysis
+                task.reports.getXml().outputLocation = new File(jacocoPluginExtension.reportsDirectory.asFile.get(),
+                        "${integrationTestTask.name}/${task.name}.${task.reports.getXml().name}")
+
+                logger.info("Using following configuration for {} : 'reports.csv.enabled' - {}, " +
+                        "'reports.html.enabled' - {}, 'reports.xml.enabled' - {}, 'reports.xml.destination' - {}, " +
+                        "'sourceDirectories' - {}, 'classDirectories' - {}",
+
+                        task.path, task.reports.getCsv().required, task.reports.getHtml().required,
+                        task.reports.getXml().required, project.relativePath(task.reports.getXml().outputLocation),
+                        mainSourceSet.allJava.srcDirs.stream().map { project.relativePath(it) }.collect(Collectors.toList()),
+                        mainSourceSet.output.files.stream().map { project.relativePath(it) }.collect(Collectors.toList()))
+            }
+        }
+
+        project.tasks.named(JavaBasePlugin.CHECK_TASK_NAME) { task ->
+            // adds dependency for "check" task on jacoco report tasks
+            def jacocoReportTasks = project.tasks.withType(JacocoReport)
+            task.dependsOn(jacocoReportTasks)
+            logger.info("Using following configuration for {} : 'dependsOn' - {}", task.path, jacocoReportTasks.names)
+        }
+    }
+}
+
+private void setUpSonarQube(Project project) {
+    // should be executed only when "java" plugin is applied to project
+    project.plugins.withId('java') {
+        // enable sonarqube static analysis
+        project.plugins.apply SonarQubePlugin
+
+        project.extensions.configure(SonarExtension) { extension ->
+            extension.properties {
+                def sourceEncoding = StandardCharsets.UTF_8.name()
+                def junitReportPaths = asCommaSeparatedList(project,
+                        ["test-results/test", "test-results/integrationTest"])
+                def checkstyleReportPaths = asCommaSeparatedList(project,
+                        ["reports/checkstyle/main.xml", "reports/checkstyle/test.xml"])
+                def jacocoReportPaths = asCommaSeparatedList(project,
+                        ["reports/jacoco/test/jacocoTestReport.xml",
+                         "reports/jacoco/integrationTest/jacocoIntegrationTestReport.xml"])
+
+                property 'sonar.sourceEncoding', sourceEncoding
+                property 'sonar.java.checkstyle.reportPaths', checkstyleReportPaths
+                property 'sonar.coverage.jacoco.xmlReportPaths', jacocoReportPaths
+                property 'sonar.junit.reportPaths', junitReportPaths
+
+                logger.info("Using following configuration for SonarQube plugin: " +
+                        "'sonar.sourceEncoding' - {}, 'sonar.java.checkstyle.reportPaths' - {}, " +
+                        "'sonar.coverage.jacoco.xmlReportPaths' - {}, 'sonar.junit.reportPaths' - {}",
+                        sourceEncoding, checkstyleReportPaths, jacocoReportPaths, junitReportPaths)
+            }
+
+            // there is no explicit dependency on "check" task due to the fact that
+            // correct execution order - "sonarqube" after "check" - will be guaranteed by CI/CD pipeline's stages
+            // moreover, execution of "sonarqube" shouldn't provoke "check" task execution once again
+        }
+    }
+}
+
+private static String asCommaSeparatedList(Project project, Collection<String> locations) {
+    return locations.stream()
+            .map { project.buildDir.toPath().resolve(it).toFile() }
+            .map { project.relativePath(it) }
+            .collect(Collectors.joining(','))
+}
+
+private String getTaskPath(TaskProvider<Task> taskProvider) {
+    if (project.rootProject == project) {
+        // in case if current project is a root project, then just output ":" plus task name according to canonical way
+        // of task path representation
+        return ":${taskProvider.name}"
+    } else {
+        // otherwise output project path with ":" as a separator plus task name
+        return "${project.path}:${taskProvider.name}"
+    }
+}

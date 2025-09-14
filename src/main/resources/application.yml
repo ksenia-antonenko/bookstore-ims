@@ -1,0 +1,59 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:54329/bookstore}
+    username: ${SPRING_DATASOURCE_USERNAME:bookstore}
+    password: ${SPRING_DATASOURCE_PASSWORD:bookstore}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        format_sql: true
+      order_by:
+        default_null_ordering: last
+    show-sql: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  liquibase:
+    change-log: classpath:db/changesets/db.changelog.xml
+
+app:
+  security:
+    admin:
+      username: ${APP_ADMIN_USER:admin}
+      password: ${APP_ADMIN_PASS:admin123}
+    user:
+      username: ${APP_USER_USER:user}
+      password: ${APP_USER_PASS:user123}
+
+management:
+  endpoint:
+    health:
+       probes:
+          enabled: true
+  endpoints:
+    web:
+       exposure:
+          include: health, info, prometheus, env
+
+springdoc:
+    paths-to-exclude: /*
+    api-docs:
+        path: /api/swagger
+    swagger-ui:
+        path: /api/swagger/ui
+        url: /api/openapi/${springdoc.swagger-ui.file-name}
+        disable-swagger-default-url: true
+        enabled: true
+
+logging:
+  level:
+    org.example.bookstore: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN
